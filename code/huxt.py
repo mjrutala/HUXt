@@ -44,14 +44,25 @@ class Observer:
             body: String indicating which body to look up the positions of .
             times: A list/array of Astropy Times to interpolate the coordinate of the selected body.
         """
-        bodies = ["MERCURY", "VENUS", "EARTH", "MARS", "JUPITER", "SATURN", "STA", "STB"]
-        if body.upper() in bodies:
-            self.body = body.upper()
+        self.match_alias2body(body)
+        bodies_hdf5 = ["MERCURY", "VENUS", "EARTH", "MARS", "JUPITER", "SATURN", "STEREO A", "STEROE B"]
+        
+        # if body.upper() in bodies:
+        #     self.body = body.upper()
+        # else:
+        #     print("Warning, body {} not recognised.".format(body))
+        #     print("Only {} are valid.".format(bodies))
+        #     print("Defaulting to Earth")
+        #     self.body = "EARTH"
+        
+        if self.body in bodies_hdf5:
+            self.from_hdf5(times)
         else:
-            print("Warning, body {} not recognised.".format(body))
-            print("Only {} are valid.".format(bodies))
-            print("Defaulting to Earth")
-            self.body = "EARTH"
+            self.from_webfile(times)
+            
+        return
+    
+    def from_hdf5(self, times):
 
         # Get path to ephemeris file and open
         dirs = _setup_dirs_()
@@ -123,7 +134,58 @@ class Observer:
 
         ephem.close()
         return
+    
+    def match_alias2body(self, alias):
+        """
+        Returns a standardized body name given potential body shortnames.
 
+        Parameters
+        ----------
+        alias : String name of the planet or spacecraft given by user.
+
+        Returns
+        -------
+        body: Standard string name of the planet or spacecraft.
+
+        """
+        body_aliases = {"MERCURY": ["MERCURY"],
+                        "VENUS": ["VENUS"],
+                        "EARTH": ["EARTH", "OMNI"],
+                        "MARS": ["MARS"],
+                        "JUPITER": ["JUPITER"],
+                        "SATURN": ["SATURN"],
+                        "URANUS": ["URANUS"],
+                        "NEPTUNE": ["NEPTUNE"],
+                        "PARKER SOLAR PROBE": ["PARKER SOLAR PROBE", "PARKER", "PSP"],
+                        "SOLAR ORBITER": ["SOLAR ORBITER", "SOLO", "SO"],
+                        "STEREO A": ["STEREO A", "STA", "STEREOA"],
+                        "STEREO B": ["STEREO B", "STB", "STEREOB"],
+                        "MAVEN": ["MAVEN"],
+                        "ULYSSES": ["ULYSSES", "ULY"],
+                        "GALILEO": ["GALILEO"],
+                        "JUNO": ["JUNO"],
+                        "CASSINI": ["CASSINI"],
+                        "VOYAGER 1": ["VOYAGER 1", "VOYAGER1", "VOY1", "VY1"],
+                        "VOYAGER 2": ["VOYAGER 2", "VOYAGER2", "VOY2", "VY2"],
+                        }
+    
+        self.body = None
+        for body, alias_list in body_aliases.items():
+            if alias.upper() in alias_list:
+                self.body = body
+                
+        if self.body is None:
+            print("Warning, alias {} not recognised as a body.".format(alias))
+            print("Only aliases for {} are valid.".format(body_aliases.keys()))
+            print("Defaulting to Earth")
+            self.body = "EARTH"
+        
+        return
+        
+    def from_file(self):
+        
+        return
+        
 
 class ConeCME:
     """
