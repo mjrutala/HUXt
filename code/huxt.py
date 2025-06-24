@@ -63,13 +63,20 @@ class Observer:
         return
     
     def from_hdf5(self, times):
-
+        
         # Get path to ephemeris file and open
         dirs = _setup_dirs_()
         ephem = h5py.File(dirs['ephemeris'], 'r')
+        
+        # The hdf5 file uses STA/STB instead of STEREO A/STEREO B
+        body = self.body
+        if body == "STEREO A":
+            body = "STA"
+        if body == "STEREO B":
+            body = "STB"
 
         # Now get observers coordinates
-        all_time = Time(ephem[self.body]['HEEQ']['time'], format='jd')
+        all_time = Time(ephem[body]['HEEQ']['time'], format='jd')
         # Pad out the window to account for single values being passed. 
         dt = TimeDelta(2 * 60 * 60, format='sec')
         id_epoch = (all_time >= (times.min() - dt)) & (all_time <= (times.max() + dt))
@@ -90,50 +97,228 @@ class Observer:
             self.lat_c = np.ones(len(self.time)) * np.nan
 
         else:
-            r = ephem[self.body]['HEEQ']['radius'][id_epoch]
+            r = ephem[body]['HEEQ']['radius'][id_epoch]
             self.r = np.interp(times.jd, epoch_time.jd, r)
             self.r = (self.r * u.km).to(u.solRad)
 
-            lon = np.deg2rad(ephem[self.body]['HEEQ']['longitude'][id_epoch])
+            lon = np.deg2rad(ephem[body]['HEEQ']['longitude'][id_epoch])
             lon = np.unwrap(lon)
             self.lon = np.interp(times.jd, epoch_time.jd, lon)
             self.lon = _zerototwopi_(self.lon)
             self.lon = self.lon * u.rad
 
-            lat = np.deg2rad(ephem[self.body]['HEEQ']['latitude'][id_epoch])
+            lat = np.deg2rad(ephem[body]['HEEQ']['latitude'][id_epoch])
             self.lat = np.interp(times.jd, epoch_time.jd, lat)
             self.lat = self.lat * u.rad
 
-            r = ephem[self.body]['HAE']['radius'][id_epoch]
+            r = ephem[body]['HAE']['radius'][id_epoch]
             self.r_hae = np.interp(times.jd, epoch_time.jd, r)
             self.r_hae = (self.r_hae * u.km).to(u.solRad)
 
-            lon = np.deg2rad(ephem[self.body]['HAE']['longitude'][id_epoch])
+            lon = np.deg2rad(ephem[body]['HAE']['longitude'][id_epoch])
             lon = np.unwrap(lon)
             self.lon_hae = np.interp(times.jd, epoch_time.jd, lon)
             self.lon_hae = _zerototwopi_(self.lon_hae)
             self.lon_hae = self.lon_hae * u.rad
 
-            lat = np.deg2rad(ephem[self.body]['HAE']['latitude'][id_epoch])
+            lat = np.deg2rad(ephem[body]['HAE']['latitude'][id_epoch])
             self.lat_hae = np.interp(times.jd, epoch_time.jd, lat)
             self.lat_hae = self.lat_hae * u.rad
 
-            r = ephem[self.body]['CARR']['radius'][id_epoch]
+            r = ephem[body]['CARR']['radius'][id_epoch]
             self.r_c = np.interp(times.jd, epoch_time.jd, r)
             self.r_c = (self.r_c * u.km).to(u.solRad)
 
-            lon = np.deg2rad(ephem[self.body]['CARR']['longitude'][id_epoch])
+            lon = np.deg2rad(ephem[body]['CARR']['longitude'][id_epoch])
             lon = np.unwrap(lon)
             self.lon_c = np.interp(times.jd, epoch_time.jd, lon)
             self.lon_c = _zerototwopi_(self.lon_c)
             self.lon_c = self.lon_c * u.rad
 
-            lat = np.deg2rad(ephem[self.body]['CARR']['latitude'][id_epoch])
+            lat = np.deg2rad(ephem[body]['CARR']['latitude'][id_epoch])
             self.lat_c = np.interp(times.jd, epoch_time.jd, lat)
             self.lat_c = self.lat_c * u.rad
 
         ephem.close()
         return
+    
+    def from_webfile(self, times):
+        
+        # Import here to avoid conflict with HDF5-only usage requirements
+        from astroquery.jplhorizons import Horizons
+        from astropy.coordinates import SkyCoord
+        from astropy.coordinates import HeliocentricMeanEcliptic
+        from sunpy.coordinates import frames
+        import pandas as pd
+        
+        # Get the SPICE ID number of body
+        # If the body isn't supported here, pass it back to the hdf5 reader
+        body_id_dict = {"MERCURY": "199", "VENUS": "299", "EARTH": "399",
+                        "MARS": "499", "JUPITER": "599", "SATURN": "699",
+                        "URANUS": "799", "NEPTUNE": "899",
+                        "PARKER SOLAR PROBE": "-96",
+                        "SOLAR ORBITER": "-144",
+                        "STEREO A": "-234",
+                        "STEREO B": "-235",
+                        "MAVEN": "-202",
+                        "ULYSSES": "-55",
+                        "GALILEO": "-77",
+                        "JUNO": "-61",
+                        "CASSINI": "-82",
+                        "VOYAGER 1": "-31",
+                        "VOYAGER 2": "-32"}
+        if self.body in body_id_dict.keys():
+            body_id = body_id_dict[self.body]
+        else:
+            # Default to the Earth, use from_hdf5
+            print("Warning, body '{}' not recognised.".format(self.body))
+            print("Only {} are currently supported.".format(body_id_dict.keys()))
+            print("Defaulting to Earth, from HDF5 file...")
+            self.body = 'EARTH'
+            self.from_file()
+            return
+
+        # Pad out the window to account for single values being passed. 
+        dt = TimeDelta(2 * 60 * 60, format='sec')
+        
+        # 4 hour steps matches the resolution in the hdf5 file
+        # Rounded down to nearest day (easier than rounding to nearest multiple of 4 hours)
+        epoch_dict = {'start': (times.min() - dt).iso[:-12] + '00:00:00', 
+                      'stop': (times.max() + dt).iso, 
+                      'step': '4h'}
+        
+        # Check if there's a file locally
+        filename = 'body{}_ephemeris_fromHorizons.zip'.format(body_id)
+        filepath = '/'.join(_setup_dirs_()['ephemeris'].split('/')[0:-1]) + '/' + filename
+        
+        if os.path.isfile(filepath):
+            # If a file exists, read it and check overlap
+            existing_ephemeris = pd.read_csv(filepath)
+            epoch_start = Time(epoch_dict['start']).mjd
+            epoch_stop = Time(epoch_dict['stop']).mjd
+            
+            # If the file contains all ephemeris, we can skip the Horizons query
+            overlap = existing_ephemeris.query("@epoch_start <= mjd < @epoch_stop")
+            if len(overlap) >= ((epoch_stop-epoch_start) * 24 / 4):
+                need_ephemeris = False
+            else:
+                need_ephemeris = True
+        else:
+            existing_ephemeris = False
+            need_ephemeris = True
+           
+        if need_ephemeris:
+            print("Downloading ephemeris from JPL Horizons...")
+            breakpoint()
+            # Horizons will grab ICRF coords given location @0
+            pos = Horizons(id = body_id, location = '@0', epochs = epoch_dict)
+            vec = pos.vectors(refplane='earth').to_pandas()
+            epoch_time = Time(vec['datetime_jd'], format='jd')
+            
+            icrf_coords = SkyCoord(vec['x'].to_numpy() * u.AU,
+                                   vec['y'].to_numpy() * u.AU,
+                                   vec['z'].to_numpy() * u.AU,
+                                   obstime = epoch_time,
+                                   frame='icrs', representation_type='cartesian')
+            
+            # Transform to HEEQ frame
+            heeq_coords = icrf_coords.transform_to(frames.HeliographicStonyhurst)
+            
+            # Transform to HAE frame
+            hae_coords = heeq_coords.transform_to(HeliocentricMeanEcliptic)
+            
+            # Transform to Heliographic Carrington (CARR)
+            carr_coords = heeq_coords.transform_to(frames.HeliographicCarrington(observer='self'))
+            
+            new_ephemeris = pd.DataFrame(data = {'time': epoch_time.datetime,
+                                                 'mjd': epoch_time.mjd,
+                                                 'r_heeq': heeq_coords.radius.to(u.solRad).value,
+                                                 'lon_heeq': heeq_coords.lon.to(u.rad).value,
+                                                 'lat_heeq': heeq_coords.lat.to(u.rad).value,
+                                                 'r_hae': hae_coords.distance.to(u.solRad).value,
+                                                 'lon_hae': hae_coords.lon.to(u.rad).value,
+                                                 'lat_hae': hae_coords.lat.to(u.rad).value,
+                                                 'r_carr': carr_coords.radius.to(u.solRad).value,
+                                                 'lon_carr': carr_coords.lon.to(u.rad).value,
+                                                 'lat_carr': carr_coords.lat.to(u.rad).value})
+            
+            # Merge body_df with existing_df, if it exists
+            if existing_ephemeris is not False:
+                # Merge existing_ephemeris and new_ephemeris
+                existing_ephemeris = pd.concat([existing_ephemeris, new_ephemeris], axis='index')
+                existing_ephemeris.drop_duplicates(['mjd'], inplace=True, ignore_index=True)
+                existing_ephemeris.sort_values(by=['mjd'], axis='index', inplace=True)
+                existing_ephemeris.reset_index(inplace=True, drop=True)
+                
+            else:
+                existing_ephemeris = new_ephemeris
+            
+            # Save the new results
+            existing_ephemeris.to_csv(filepath, compression='zip', index=False)
+        
+        # Now get observers coordinates
+        all_time = Time(existing_ephemeris['mjd'], format='mjd')
+        # Pad out the window to account for single values being passed. 
+        # dt = TimeDelta(2 * 60 * 60, format='sec')
+        id_epoch = (all_time >= (times.min() - dt)) & (all_time <= (times.max() + dt))
+        epoch_time = all_time[id_epoch]
+        
+        self.time = times
+        if len(epoch_time.jd) == 0:
+            self.r = np.ones(len(self.time)) * np.nan
+            self.lon = np.ones(len(self.time)) * np.nan
+            self.lat = np.ones(len(self.time)) * np.nan
+
+            self.r_hae = np.ones(len(self.time)) * np.nan
+            self.lon_hae = np.ones(len(self.time)) * np.nan
+            self.lat_hae = np.ones(len(self.time)) * np.nan
+
+            self.r_c = np.ones(len(self.time)) * np.nan
+            self.lon_c = np.ones(len(self.time)) * np.nan
+            self.lat_c = np.ones(len(self.time)) * np.nan
+
+        else:
+            r = existing_ephemeris['r_heeq'][id_epoch]
+            self.r = np.interp(self.time.jd, epoch_time.jd, r)
+            self.r = self.r * u.solRad
+
+            lon = np.unwrap(existing_ephemeris['lon_heeq'])[id_epoch]
+            self.lon = np.interp(self.time.jd, epoch_time.jd, lon)
+            self.lon = _zerototwopi_(self.lon)
+            self.lon = self.lon * u.rad
+
+            lat = existing_ephemeris['lat_heeq'][id_epoch]
+            self.lat = np.interp(self.time.jd, epoch_time.jd, lat)
+            self.lat = self.lat * u.rad
+
+            r = existing_ephemeris['r_hae'][id_epoch]
+            self.r_hae = np.interp(self.time.jd, epoch_time.jd, r)
+            self.r_hae = self.r_hae * u.solRad
+
+            lon = np.unwrap(existing_ephemeris['lon_hae'])[id_epoch]
+            self.lon_hae = np.interp(self.time.jd, epoch_time.jd, lon)
+            self.lon_hae = _zerototwopi_(self.lon_hae)
+            self.lon_hae = self.lon_hae * u.rad
+
+            lat = existing_ephemeris['lat_hae'][id_epoch]
+            self.lat_hae = np.interp(self.time.jd, epoch_time.jd, lat)
+            self.lat_hae = self.lat_hae * u.rad
+
+            r = existing_ephemeris['r_carr'][id_epoch]
+            self.r_c = np.interp(self.time.jd, epoch_time.jd, r)
+            self.r_c = self.r_c * u.solRad
+            
+            lon = np.unwrap(existing_ephemeris['lon_carr'])[id_epoch]
+            self.lon_c = np.interp(self.time.jd, epoch_time.jd, lon)
+            self.lon_c = _zerototwopi_(self.lon_c)
+            self.lon_c = self.lon_c * u.rad
+
+            lat = existing_ephemeris['lat_carr'][id_epoch]
+            self.lat_c = np.interp(self.time.jd, epoch_time.jd, lat)
+            self.lat_c = self.lat_c * u.rad
+        
+        return
+            
     
     def match_alias2body(self, alias):
         """
@@ -179,10 +364,6 @@ class Observer:
             print("Only aliases for {} are valid.".format(body_aliases.keys()))
             print("Defaulting to Earth")
             self.body = "EARTH"
-        
-        return
-        
-    def from_file(self):
         
         return
         
