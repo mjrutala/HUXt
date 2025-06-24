@@ -1286,7 +1286,7 @@ def generate_vCarr_from_OMNI(runstart, runend, nlon_grid=None, omni_input=None, 
         nlon_grid = nlon
     if not (nlon_grid == nlon):
         print('Warning: vCarr generated for different longitude resolution than current HUXt default')
-
+    
     # if omni data is not supplied, download it
     if omni_input is None:
 
@@ -1322,7 +1322,9 @@ def generate_vCarr_from_OMNI(runstart, runend, nlon_grid=None, omni_input=None, 
     cr_lon_init = np.ones(len(omni_int)) * u.rad
     for i in range(0, len(omni_int)):
         cr[i], cr_lon_init[i] = datetime2huxtinputs(omni_int['datetime'][i])
-
+    
+    breakpoint()
+    
     omni_int['Carr_lon'] = cr_lon_init.value  # remove unit as this confuses pd.DataFrame.copy() needed later
     omni_int['Carr_lon_unwrap'] = np.unwrap(omni_int['Carr_lon'].to_numpy())
 
@@ -1693,6 +1695,179 @@ def generate_vCarr_from_OMNI_DTW(runstart, runend, nlon=None, omni_input=None, r
 
     return time_trim, clon_grid, vcarr_grid_trim, -bcarr_grid_trim
 
+def generate_vCarr_from_insitu(runstart, runend, nlon_grid=None, 
+                               insitu_source=None, insitu_input=None, 
+                               dt=1 * u.day, ref_r=215 * u.solRad,
+                               corot_type='both'):
+    """
+    A function to download OMNI data and generate V_carr and time_grid for use with set_time_dependent_boundary
+
+    Args:
+        runstart: Start time as a datetime
+        runend: End time as a datetime
+        nlon_grid: Int. If none specified, will be set to the current HUXt value (usually 128)
+        omni_input: Optional input for supplying the OMNI data. If left as None, it will be downloaded at runtime.
+        dt: time resolution, in days is 1*u.day.
+        ref_r: radial distance to produce v at, 215*u.solRad by default.
+        corot_type: String that determines corot type (both, back, forward)
+    Returns:
+        Time: Array of times as modified Julian days
+        Vcarr: Array of solar wind speeds mapped as a function of Carr long and time
+        bcarr: Array of Br mapped as a function of Carr long and time
+    """
+
+    # check the coro_type is one of the accepted values
+    assert corot_type == 'both' or corot_type == 'back' or corot_type == 'forward'
+    
+    # set the default longitude grid, check specified value
+    all_lons, dlon, nlon = H.longitude_grid()
+    if nlon_grid is None:
+        nlon_grid = nlon
+    if not (nlon_grid == nlon):
+        print('Warning: vCarr generated for different longitude resolution than current HUXt default')
+    
+    #!!!! This is basically just for testing at this point!
+    # Get observer 
+    if insitu_source is None:
+        print("No source specified for Observer class; defaulting to Earth/OMNI.")
+        insitu_source = 'OMNI'
+        
+    # if data is not supplied, download it
+    if insitu_input is None:
+        if (insitu_source != 'OMNI'):
+            print("Source specified, but input not provided. Either add an input DataFrame, or change source to 'OMNI' for automatic donwload")
+
+        # download an additional 28 days either side
+        starttime = runstart - datetime.timedelta(days=28)
+        endtime = runend + datetime.timedelta(days=28)
+        data = get_omni(starttime, endtime)
+
+        # find the period of interest
+        mask = ((data['datetime'] > starttime) & (data['datetime'] < endtime))
+        insitu = data[mask]
+        insitu = insitu.reset_index()
+    else:
+        # create a copy of the input data, so the original data is unchanged.
+        insitu = insitu_input.copy()
+
+
+    # interpolate through OMNI V data gaps
+    insitu_int = insitu.interpolate(method='linear', axis=0).ffill().bfill()
+    del insitu
+
+    insitu_int['Time'] = Time(insitu_int['datetime'])
+
+    smjd = insitu_int['Time'][0].mjd
+    fmjd = insitu_int['Time'][len(insitu_int) - 1].mjd
+
+    # compute the synodic rotation period
+    daysec = 24 * 60 * 60 * u.s
+    synodic_period = 27.2753 * daysec  # Solar Synodic rotation period from Earth.
+    omega_synodic = 2 * np.pi * u.rad / synodic_period
+
+    # get the Earth radial distance info.
+    # dirs = H._setup_dirs_()
+    # ephem = h5py.File(dirs['ephemeris'], 'r')
+    # convert ephemeric to mjd and interpolate to required times
+    # all_time = Time(ephem['EARTH']['HEEQ']['time'], format='jd').value - 2400000.5
+    # insitu_int['R'] = np.interp(insitu_int['mjd'], all_time, ephem['EARTH']['HEEQ']['radius'][:])  # no unit as L1164
+    
+    # Create an observer object and get the distance that way
+    obs = H.Observer(insitu_source, Time(insitu_input['Epoch']))
+    insitu_int['R'] = obs.r.value
+
+    # compute carrington longitudes (at the Earth), to get the carrington rotation number
+    cr = np.ones(len(insitu_int))
+    cr_lon_init = np.ones(len(insitu_int)) * u.rad
+    for i in range(0, len(insitu_int)):
+        cr[i], cr_lon_init[i] = datetime2huxtinputs(insitu_int['datetime'][i])
+
+    # insitu_int['Carr_lon'] = cr_lon_init.value  # remove unit as this confuses pd.DataFrame.copy() needed later
+    # insitu_int['Carr_lon_unwrap'] = np.unwrap(insitu_int['Carr_lon'].to_numpy())
+    
+    insitu_int['Carr_lon'] = obs.lon_c.value # remove unit as this confuses pd.DataFrame.copy() needed later
+    insitu_int['Carr_lon_unwrap'] = np.unwrap(insitu_int['Carr_lon'].to_numpy())
+
+    insitu_int['mjd'] = [t.mjd for t in insitu_int['Time'].array]
+
+    # map each point back/forward to the reference radial distance
+    insitu_int['mjd_ref'] = insitu_int['mjd']
+    insitu_int['Carr_lon_ref'] = insitu_int['Carr_lon_unwrap']
+
+    for t in range(0, len(insitu_int)):
+        # time lag to reference radius
+        delta_r = ref_r.to(u.km).value - insitu_int['R'][t]
+        delta_t = delta_r / insitu_int['V'][t] / daysec.value
+        insitu_int.loc[t, 'mjd_ref'] = insitu_int.loc[t, 'mjd_ref'] + delta_t
+        # change in Carr long of the measurement
+        insitu_int.loc[t, 'Carr_lon_ref'] = insitu_int.loc[
+                                              t, 'Carr_lon_ref'] - delta_t * daysec.value * 2 * np.pi / synodic_period.value
+
+    # sort the omni data by Carr_lon_ref for interpolation
+    insitu_temp = insitu_int.copy()
+    insitu_temp = insitu_temp.sort_values(by=['Carr_lon_ref'])
+
+    # now remap these speeds back on to the original time steps
+    insitu_int['V_ref'] = np.interp(insitu_int['Carr_lon_unwrap'],
+                                    insitu_temp['Carr_lon_ref'], insitu_temp['V'])
+    insitu_int['Br_ref'] = np.interp(insitu_int['Carr_lon_unwrap'],
+                                     insitu_temp['Carr_lon_ref'], -insitu_temp['BX_GSE'])
+
+    # compute the longitudinal and time grids
+    dphi_grid = 360 / nlon_grid
+    lon_grid = np.arange(dphi_grid / 2, 360.1 - dphi_grid / 2, dphi_grid) * np.pi / 180 * u.rad
+    dt = dt.to(u.day).value
+    time_grid = np.arange(smjd, fmjd + dt / 2, dt)
+
+    vgrid_carr_recon_back = np.ones((nlon_grid, len(time_grid))) * np.nan
+    vgrid_carr_recon_forward = np.ones((nlon_grid, len(time_grid))) * np.nan
+    vgrid_carr_recon_both = np.ones((nlon_grid, len(time_grid))) * np.nan
+
+    bgrid_carr_recon_back = np.ones((nlon_grid, len(time_grid))) * np.nan
+    bgrid_carr_recon_forward = np.ones((nlon_grid, len(time_grid))) * np.nan
+    bgrid_carr_recon_both = np.ones((nlon_grid, len(time_grid))) * np.nan
+
+    for t in range(0, len(time_grid)):
+        # find nearest time and current Carrington longitude
+        t_id = np.argmin(np.abs(insitu_int['mjd'] - time_grid[t]))
+        Elong = insitu_int['Carr_lon'][t_id] * u.rad
+
+        # get the Carrington longitude difference from current Earth pos
+        dlong_back = _zerototwopi_(lon_grid.value - Elong.value) * u.rad
+        dlong_forward = _zerototwopi_(Elong.value - lon_grid.value) * u.rad
+
+        dt_back = (dlong_back / omega_synodic).to(u.day)
+        dt_forward = (dlong_forward / omega_synodic).to(u.day)
+
+        vgrid_carr_recon_back[:, t] = np.interp(time_grid[t] - dt_back.value,
+                                                insitu_int['mjd'], insitu_int['V_ref'],
+                                                left=np.nan, right=np.nan)
+        bgrid_carr_recon_back[:, t] = np.interp(time_grid[t] - dt_back.value,
+                                                insitu_int['mjd'], insitu_int['Br_ref'],
+                                                left=np.nan, right=np.nan)
+
+        vgrid_carr_recon_forward[:, t] = np.interp(time_grid[t] + dt_forward.value,
+                                                   insitu_int['mjd'], insitu_int['V_ref'],
+                                                   left=np.nan, right=np.nan)
+        bgrid_carr_recon_forward[:, t] = np.interp(time_grid[t] + dt_forward.value,
+                                                   insitu_int['mjd'], insitu_int['Br_ref'],
+                                                   left=np.nan, right=np.nan)
+
+        numerator = (dt_forward * vgrid_carr_recon_back[:, t] + dt_back * vgrid_carr_recon_forward[:, t])
+        denominator = dt_forward + dt_back
+        vgrid_carr_recon_both[:, t] = numerator / denominator
+
+        numerator = (dt_forward * bgrid_carr_recon_back[:, t] + dt_back * bgrid_carr_recon_forward[:, t])
+        bgrid_carr_recon_both[:, t] = numerator / denominator
+    # cut out the requested time
+    mask = ((time_grid >= Time(runstart).mjd) & (time_grid <= Time(runend).mjd))
+
+    if corot_type == 'both':
+        return time_grid[mask], vgrid_carr_recon_both[:, mask], bgrid_carr_recon_both[:, mask]
+    elif corot_type == 'back':
+        return time_grid[mask], vgrid_carr_recon_back[:, mask], bgrid_carr_recon_back[:, mask]
+    elif corot_type == 'forward':
+        return time_grid[mask], vgrid_carr_recon_forward[:, mask], bgrid_carr_recon_forward[:, mask]
 
 def get_DONKI_ICMEs(startdate, enddate, location='Earth', ICME_duration=1.5 * u.day):
     """
