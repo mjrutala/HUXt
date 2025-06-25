@@ -1765,16 +1765,16 @@ def generate_vCarr_from_insitu(runstart, runend, nlon_grid=None,
     synodic_period = 27.2753 * daysec  # Solar Synodic rotation period from Earth.
     omega_synodic = 2 * np.pi * u.rad / synodic_period
 
-    # get the Earth radial distance info.
+    # # get the Earth radial distance info.
     # dirs = H._setup_dirs_()
     # ephem = h5py.File(dirs['ephemeris'], 'r')
-    # convert ephemeric to mjd and interpolate to required times
+    # # convert ephemeric to mjd and interpolate to required times
     # all_time = Time(ephem['EARTH']['HEEQ']['time'], format='jd').value - 2400000.5
     # insitu_int['R'] = np.interp(insitu_int['mjd'], all_time, ephem['EARTH']['HEEQ']['radius'][:])  # no unit as L1164
     
     # Create an observer object and get the distance that way
     obs = H.Observer(insitu_source, Time(insitu_input['Epoch']))
-    insitu_int['R'] = obs.r.value
+    insitu_int['R'] = obs.r.to(u.km).value
 
     # compute carrington longitudes (at the Earth), to get the carrington rotation number
     cr = np.ones(len(insitu_int))
@@ -1806,7 +1806,7 @@ def generate_vCarr_from_insitu(runstart, runend, nlon_grid=None,
     # sort the omni data by Carr_lon_ref for interpolation
     insitu_temp = insitu_int.copy()
     insitu_temp = insitu_temp.sort_values(by=['Carr_lon_ref'])
-
+    
     # now remap these speeds back on to the original time steps
     insitu_int['V_ref'] = np.interp(insitu_int['Carr_lon_unwrap'],
                                     insitu_temp['Carr_lon_ref'], insitu_temp['V'])
