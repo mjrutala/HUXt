@@ -45,7 +45,7 @@ class Observer:
             times: A list/array of Astropy Times to interpolate the coordinate of the selected body.
         """
         self.match_alias2body(body)
-        bodies_hdf5 = ["MERCURY", "VENUS", "EARTH", "MARS", "JUPITER", "SATURN", "STEREO A", "STEROE B"]
+        bodies_hdf5 = ["MERCURY", "VENUS", "EARTH", "MARS", "JUPITER", "SATURN", "STEREO A", "STEREO B"]
         
         # if body.upper() in bodies:
         #     self.body = body.upper()
@@ -58,6 +58,7 @@ class Observer:
         if self.body in bodies_hdf5:
             self.from_hdf5(times)
         else:
+            breakpoint()
             self.from_webfile(times)
             
         return
@@ -209,7 +210,6 @@ class Observer:
            
         if need_ephemeris:
             print("Downloading ephemeris from JPL Horizons...")
-            breakpoint()
             # Horizons will grab ICRF coords given location @0
             pos = Horizons(id = body_id, location = '@0', epochs = epoch_dict)
             vec = pos.vectors(refplane='earth').to_pandas()
