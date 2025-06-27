@@ -5,6 +5,7 @@ from urllib.request import urlopen
 import json
 import ssl
 import copy
+import tqdm
 
 import astropy.units as u
 from astropy.io import fits
@@ -2032,7 +2033,7 @@ def remove_ICMEs(data_df, icmes, interpolate=True, icme_buffer=0.1 * u.day, inte
     interp_buffer_d = interp_buffer.to(u.day).value
 
     # first remove all ICMEs and add NaNs to the required parameters
-    for i in range(0, len(icmes)):
+    for i in tqdm.tqdm(range(0, len(icmes)), 'Removing ICMEs'):
 
         icme_start = icmes['shock_mjd'][i] - icme_buffer_d
         icme_stop = icmes['end_mjd'][i] + icme_buffer_d
@@ -2041,7 +2042,7 @@ def remove_ICMEs(data_df, icmes, interpolate=True, icme_buffer=0.1 * u.day, inte
                      (data['mjd'] <= icme_stop))
 
         if any(mask_icme):
-            print('removing ICME #' + str(i))
+            # print('removing ICME #' + str(i))
             for param in params:
                 data.loc[mask_icme, param] = np.nan
 
