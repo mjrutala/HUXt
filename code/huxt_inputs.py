@@ -1324,8 +1324,6 @@ def generate_vCarr_from_OMNI(runstart, runend, nlon_grid=None, omni_input=None, 
     for i in range(0, len(omni_int)):
         cr[i], cr_lon_init[i] = datetime2huxtinputs(omni_int['datetime'][i])
     
-    breakpoint()
-    
     omni_int['Carr_lon'] = cr_lon_init.value  # remove unit as this confuses pd.DataFrame.copy() needed later
     omni_int['Carr_lon_unwrap'] = np.unwrap(omni_int['Carr_lon'].to_numpy())
 
