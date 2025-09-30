@@ -6,6 +6,9 @@
 # Unignore all dirs
 !*/
 
+# Ignore the data directory
+data/
+
 # Compiled python modules.
 *.pyc
 
