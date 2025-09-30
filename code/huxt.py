@@ -58,7 +58,6 @@ class Observer:
         if self.body in bodies_hdf5:
             self.from_hdf5(times)
         else:
-            breakpoint()
             self.from_webfile(times)
             
         return
